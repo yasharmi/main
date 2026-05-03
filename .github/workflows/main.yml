@@ -1,0 +1,64 @@
+name: Download, Split and Distribute
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: 'لینک مستقیم دانلود فایل'
+        required: true
+      github_username:
+        description: 'نام کاربری گیت‌هاب شما'
+        required: true
+
+jobs:
+  process-file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download File
+        run: |
+          wget -O main_file.zip "${{ github.event.inputs.file_url }}"
+
+      - name: Split File
+        run: |
+          # تقسیم فایل به پارت‌های 95 مگابایتی با پسوند عددی
+          split -b 95M -d main_file.zip part_
+
+      - name: Distribute to Storage Repos
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          USERNAME: ${{ github.event.inputs.github_username }}
+        run: |
+          # تنظیمات گیت
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+          # لیست کردن تمام پارت‌ها
+          PARTS=(part_*)
+          TOTAL_PARTS=${#PARTS[@]}
+          
+          REPO_COUNTER=1
+          PART_COUNTER=0
+
+          while [ $PART_COUNTER -lt $TOTAL_PARTS ]; do
+            REPO_NAME="Storage-$REPO_COUNTER"
+            echo "Processing $REPO_NAME..."
+            
+            # کلون کردن مخزن هدف
+            git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
+            cd target_repo
+            
+            # کپی کردن حداکثر 6 فایل در این مخزن
+            for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
+              cp ../${PARTS[$PART_COUNTER]} .
+              PART_COUNTER=$((PART_COUNTER+1))
+            done
+            
+            # کامیت و پوش کردن
+            git add .
+            git commit -m "Add parts for $REPO_NAME" || echo "No changes to commit"
+            git push origin main || git push origin master
+            
+            cd ..
+            rm -rf target_repo
+            REPO_COUNTER=$((REPO_COUNTER+1))
+          done
