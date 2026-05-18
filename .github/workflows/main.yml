@@ -1,10 +1,10 @@
-name: Download, Split and Distribute
+name: Download YouTube, Split and Distribute
 
 on:
   workflow_dispatch:
     inputs:
-      file_url:
-        description: 'لینک مستقیم دانلود فایل'
+      youtube_url:
+        description: 'لینک ویدئوی یوتیوب'
         required: true
       github_username:
         description: 'نام کاربری گیت‌هاب شما'
@@ -13,26 +13,37 @@ on:
 jobs:
   process-file:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Download File
+      - name: Install yt-dlp
         run: |
-          wget -O main_file.zip "${{ github.event.inputs.file_url }}"
+          sudo apt update
+          sudo apt install -y ffmpeg
+          pip install yt-dlp
+
+      - name: Download YouTube Video
+        run: |
+          yt-dlp -f "bestvideo+bestaudio/best" \
+          -o "video.%(ext)s" \
+          "${{ github.event.inputs.youtube_url }}"
+
+      - name: Prepare File
+        run: |
+          FILE=$(ls video.*)
+          mv "$FILE" main_file.mp4
 
       - name: Split File
         run: |
-          # تقسیم فایل به پارت‌های 95 مگابایتی با پسوند عددی
-          split -b 95M -d main_file.zip part_
+          split -b 95M -d main_file.mp4 part_
 
       - name: Distribute to Storage Repos
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           USERNAME: ${{ github.event.inputs.github_username }}
         run: |
-          # تنظیمات گیت
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
-          # لیست کردن تمام پارت‌ها
           PARTS=(part_*)
           TOTAL_PARTS=${#PARTS[@]}
           
@@ -43,19 +54,16 @@ jobs:
             REPO_NAME="Storage-$REPO_COUNTER"
             echo "Processing $REPO_NAME..."
             
-            # کلون کردن مخزن هدف
             git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
             cd target_repo
             
-            # کپی کردن حداکثر 6 فایل در این مخزن
             for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
               cp ../${PARTS[$PART_COUNTER]} .
               PART_COUNTER=$((PART_COUNTER+1))
             done
             
-            # کامیت و پوش کردن
             git add .
-            git commit -m "Add parts for $REPO_NAME" || echo "No changes to commit"
+            git commit -m "Add parts for $REPO_NAME" || echo "No changes"
             git push origin main || git push origin master
             
             cd ..
