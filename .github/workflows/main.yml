@@ -1,4 +1,4 @@
-name: Download YouTube, Split and Distribute (Python-Based)
+name: Download YouTube, Split and Distribute (yt-dlp Based)
 
 on:
   workflow_dispatch:
@@ -25,27 +25,16 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install pytubefix
-        run: pip install pytubefix
+      - name: Install yt-dlp
+        run: pip install --upgrade yt-dlp
 
-      - name: Download Video via Python
+      - name: Download Video via yt-dlp
         run: |
-          python -c "
-          from pytubefix import YouTube
-          import sys
-          
-          url = '${{ github.event.inputs.youtube_url }}'
-          try:
-              # استفاده از کلاینت IOS برای دور زدن محدودیت بدون نیاز به توکن
-              yt = YouTube(url, client='IOS')
-              stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-              print(f'Downloading: {yt.title}')
-              stream.download(filename='video.mp4')
-              print('Download completed!')
-          except Exception as e:
-              print(f'Error: {e}')
-              sys.exit(1)
-          "
+          url="${{ github.event.inputs.youtube_url }}"
+          echo "Downloading $url..."
+          # دانلود بهترین کیفیت به صورت فایل mp4 یکپارچه
+          yt-dlp -f "best[ext=mp4]" -o "video.mp4" "$url"
+          echo "Download completed!"
 
       - name: Prepare File
         run: |
