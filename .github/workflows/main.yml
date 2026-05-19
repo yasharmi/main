@@ -36,8 +36,8 @@ jobs:
           
           url = '${{ github.event.inputs.youtube_url }}'
           try:
-              # فعال کردن use_po_token برای دور زدن ارور بات
-              yt = YouTube(url, client='WEB', use_po_token=True)
+              # استفاده از کلاینت IOS برای دور زدن محدودیت بدون نیاز به توکن
+              yt = YouTube(url, client='IOS')
               stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
               print(f'Downloading: {yt.title}')
               stream.download(filename='video.mp4')
