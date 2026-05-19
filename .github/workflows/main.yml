@@ -37,9 +37,8 @@ jobs:
 
       - name: Download Video via Proxy
         run: |
-          yt-dlp -f "bestvideo+bestaudio/best" \
-            -o "video.%(ext)s" \
-            "${{ steps.convert.outputs.proxy_url }}"
+          VIDEO_ID=$(echo "${{ github.event.inputs.youtube_url }}" | sed -n 's/.*v=\([^&]*\).*/\1/p')
+          curl -L "https://yewtu.be/latest_version?id=$VIDEO_ID&itag=22" -o video.mp4
 
       - name: Prepare File
         run: |
