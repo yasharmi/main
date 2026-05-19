@@ -1,102 +1,64 @@
-name: YouTube to GitHub Storage (macOS Bypass)
+name: Download, Split and Distribute
 
 on:
   workflow_dispatch:
     inputs:
-      youtube_url:
-        description: 'YouTube Video URL'
+      file_url:
+        description: 'لینک مستقیم دانلود فایل'
         required: true
-        type: string
       github_username:
-        description: 'Your GitHub Username'
+        description: 'نام کاربری گیت‌هاب شما'
         required: true
-        type: string
 
 jobs:
-  download-split-push:
-    runs-on: macos-latest # استفاده از مک‌اواس برای دور زدن مسدودی آی‌پی
+  process-file:
+    runs-on: ubuntu-latest
     steps:
-      - name: Install dependencies (yt-dlp, deno, coreutils)
+      - name: Download File
         run: |
-          brew install yt-dlp deno coreutils
-          
-      - name: Download Video via Cobalt API
+          wget -O main_file.zip "${{ github.event.inputs.file_url }}"
+
+      - name: Split File
         run: |
-          url="${{ github.event.inputs.youtube_url }}"
-          echo "Requesting download link for $url via Cobalt API..."
-          
-          # دریافت لینک مستقیم از طریق API سایت Cobalt
-          RESPONSE=$(curl -s -X POST "https://api.cobalt.tools/api/json" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            -H "Origin: https://cobalt.tools" \
-            -H "Referer: https://cobalt.tools/" \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-            -d "{\"url\": \"$url\", \"vQuality\": \"720\"}")
-            
-          # استخراج لینک دانلود با jq
-          DOWNLOAD_URL=$(echo $RESPONSE | jq -r '.url')
-          
-          if [ "$DOWNLOAD_URL" == "null" ] || [ -z "$DOWNLOAD_URL" ]; then
-            echo "Error: Could not extract download link. YouTube might have blocked the proxy."
-            echo "API Response: $RESPONSE"
-            exit 1
-          fi
-          
-          echo "Direct link obtained! Downloading file..."
-          curl -L -o video.mp4 "$DOWNLOAD_URL"
-          echo "Download completed!"
+          # تقسیم فایل به پارت‌های 95 مگابایتی با پسوند عددی
+          split -b 95M -d main_file.zip part_
 
-
-      - name: Check file and Split
-        run: |
-          # بررسی صحت فایل ویدئو
-          file video.mp4
-          
-          # استفاده از gsplit (نسخه لینوکسی split در مک) برای تکه‌تکه کردن
-          gsplit -b 95M -d video.mp4 part_
-          
-          # نمایش پارت‌های ساخته شده
-          ls -lh part_*
-
-      - name: Distribute to Storage Repositories
+      - name: Distribute to Storage Repos
         env:
-          USERNAME: ${{ github.event.inputs.github_username }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          USERNAME: ${{ github.event.inputs.github_username }}
         run: |
-          # ایجاد آرایه از تمام پارت‌ها
+          # تنظیمات گیت
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+          # لیست کردن تمام پارت‌ها
           PARTS=(part_*)
           TOTAL_PARTS=${#PARTS[@]}
-          echo "Total parts to process: $TOTAL_PARTS"
           
           REPO_COUNTER=1
-          PART_INDEX=0
-          
-          # حلقه برای توزیع پارت‌ها در ریپوها
-          while [ $PART_INDEX -lt $TOTAL_PARTS ]; do
+          PART_COUNTER=0
+
+          while [ $PART_COUNTER -lt $TOTAL_PARTS ]; do
             REPO_NAME="Storage-$REPO_COUNTER"
-            echo "Cloning and pushing to $REPO_NAME..."
+            echo "Processing $REPO_NAME..."
             
+            # کلون کردن مخزن هدف
             git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
             cd target_repo
             
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            
-            COPIED=0
-            while [ $COPIED -lt 6 ] && [ $PART_INDEX -lt $TOTAL_PARTS ]; do
-              cp ../${PARTS[$PART_INDEX]} .
-              echo "Copied ${PARTS[$PART_INDEX]} to $REPO_NAME"
-              PART_INDEX=$((PART_INDEX + 1))
-              COPIED=$((COPIED + 1))
+            # کپی کردن حداکثر 6 فایل در این مخزن
+            for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
+              cp ../${PARTS[$PART_COUNTER]} .
+              PART_COUNTER=$((PART_COUNTER+1))
             done
             
-            git add part_*
-            git commit -m "Upload video parts" || echo "No changes to commit"
+            # کامیت و پوش کردن
+            git add .
+            git commit -m "Add parts for $REPO_NAME" || echo "No changes to commit"
             git push origin main || git push origin master
             
             cd ..
             rm -rf target_repo
-            
-            REPO_COUNTER=$((REPO_COUNTER + 1))
+            REPO_COUNTER=$((REPO_COUNTER+1))
           done
