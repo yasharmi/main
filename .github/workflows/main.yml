@@ -1,13 +1,13 @@
-name: Download (via Proxy), Split and Distribute
+name: Download YouTube, Split and Distribute (No-login Safe)
 
 on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: 'لینک ویدئوی یوتیوب'
+        description: "لینک ویدئوی یوتیوب"
         required: true
       github_username:
-        description: 'نام کاربری گیت‌هاب شما'
+        description: "نام کاربری گیت‌هاب شما"
         required: true
 
 jobs:
@@ -15,61 +15,72 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install dependencies
+      - name: Install yt-dlp
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg curl jq
+          sudo apt install -y ffmpeg
+          pip install yt-dlp
 
-      # ← مرحله ۱: دریافت لینک دانلود mp4 از API واسط
-      - name: Get direct MP4 link via proxy API
-        id: getlink
+      - name: Convert URL to Proxy (Piped / Invidious)
+        id: convert
         run: |
-          YT_URL="${{ github.event.inputs.youtube_url }}"
-          # API رایگان نمونه (میتوانی عوض کنی)
-          API_URL="https://api.tomp3.cc/api/v1/convert"
-          echo "Requesting from proxy..."
-          curl -s "${API_URL}?url=${YT_URL}" -o response.json
-          cat response.json | jq '.'
-          DL_LINK=$(jq -r '.data.downloadUrl' response.json)
-          echo "download_url=$DL_LINK" >> $GITHUB_ENV
+          URL="${{ github.event.inputs.youtube_url }}"
+          # اگر لینک از youtube.com بود، به آینه piped و invidious تغییر بده
+          if echo "$URL" | grep -q "youtube.com\|youtu.be"; then
+            echo "Using proxy mirror..."
+            VIDEO_ID=$(yt-dlp --get-id "$URL") || exit 1
+            PROXY_URL="https://piped.video/watch?v=$VIDEO_ID"
+            echo "proxy_url=$PROXY_URL" >> "$GITHUB_OUTPUT"
+          else
+            echo "proxy_url=$URL" >> "$GITHUB_OUTPUT"
+          fi
 
-      # ← مرحله ۲: دانلود از لینک مستقیم (نه از خود یوتیوب)
-      - name: Download video from proxy link
+      - name: Download Video via Proxy
         run: |
-          curl -L "$download_url" -o main_file.mp4
+          yt-dlp -f "bestvideo+bestaudio/best" \
+            -o "video.%(ext)s" \
+            "${{ steps.convert.outputs.proxy_url }}"
 
-      # ← مرحله ۳: تقسیم فایل و آپلود در ریپوزیتوری‌ها
-      - name: Split and Distribute
+      - name: Prepare File
+        run: |
+          FILE=$(ls video.*)
+          mv "$FILE" main_file.mp4
+
+      - name: Split File
+        run: |
+          split -b 95M -d main_file.mp4 part_
+
+      - name: Distribute to Storage Repos
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           USERNAME: ${{ github.event.inputs.github_username }}
         run: |
-          split -b 95M -d main_file.mp4 part_
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
           PARTS=(part_*)
           TOTAL_PARTS=${#PARTS[@]}
+          
           REPO_COUNTER=1
           PART_COUNTER=0
 
           while [ $PART_COUNTER -lt $TOTAL_PARTS ]; do
             REPO_NAME="Storage-$REPO_COUNTER"
             echo "Processing $REPO_NAME..."
-
-            git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git repo
-            cd repo
-
-            for ((i=0;i<6 && PART_COUNTER<TOTAL_PARTS;i++)); do
+            
+            git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
+            cd target_repo
+            
+            for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
               cp ../${PARTS[$PART_COUNTER]} .
               PART_COUNTER=$((PART_COUNTER+1))
             done
-
+            
             git add .
-            git commit -m "Add video parts"
+            git commit -m "Add parts for $REPO_NAME" || echo "No changes"
             git push origin main || git push origin master
-
+            
             cd ..
-            rm -rf repo
+            rm -rf target_repo
             REPO_COUNTER=$((REPO_COUNTER+1))
           done
