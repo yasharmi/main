@@ -1,4 +1,4 @@
-name: Download YouTube, Split and Distribute
+name: Download (via Proxy), Split and Distribute
 
 on:
   workflow_dispatch:
@@ -15,58 +15,61 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install yt-dlp
+      - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg
-          pip install yt-dlp
+          sudo apt install -y ffmpeg curl jq
 
-      - name: Download YouTube Video
+      # ← مرحله ۱: دریافت لینک دانلود mp4 از API واسط
+      - name: Get direct MP4 link via proxy API
+        id: getlink
         run: |
-          yt-dlp -f "bestvideo+bestaudio/best" \
-          -o "video.%(ext)s" \
-          "${{ github.event.inputs.youtube_url }}"
+          YT_URL="${{ github.event.inputs.youtube_url }}"
+          # API رایگان نمونه (میتوانی عوض کنی)
+          API_URL="https://api.tomp3.cc/api/v1/convert"
+          echo "Requesting from proxy..."
+          curl -s "${API_URL}?url=${YT_URL}" -o response.json
+          cat response.json | jq '.'
+          DL_LINK=$(jq -r '.data.downloadUrl' response.json)
+          echo "download_url=$DL_LINK" >> $GITHUB_ENV
 
-      - name: Prepare File
+      # ← مرحله ۲: دانلود از لینک مستقیم (نه از خود یوتیوب)
+      - name: Download video from proxy link
         run: |
-          FILE=$(ls video.*)
-          mv "$FILE" main_file.mp4
+          curl -L "$download_url" -o main_file.mp4
 
-      - name: Split File
-        run: |
-          split -b 95M -d main_file.mp4 part_
-
-      - name: Distribute to Storage Repos
+      # ← مرحله ۳: تقسیم فایل و آپلود در ریپوزیتوری‌ها
+      - name: Split and Distribute
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           USERNAME: ${{ github.event.inputs.github_username }}
         run: |
+          split -b 95M -d main_file.mp4 part_
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
           PARTS=(part_*)
           TOTAL_PARTS=${#PARTS[@]}
-          
           REPO_COUNTER=1
           PART_COUNTER=0
 
           while [ $PART_COUNTER -lt $TOTAL_PARTS ]; do
             REPO_NAME="Storage-$REPO_COUNTER"
             echo "Processing $REPO_NAME..."
-            
-            git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
-            cd target_repo
-            
-            for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
+
+            git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git repo
+            cd repo
+
+            for ((i=0;i<6 && PART_COUNTER<TOTAL_PARTS;i++)); do
               cp ../${PARTS[$PART_COUNTER]} .
               PART_COUNTER=$((PART_COUNTER+1))
             done
-            
+
             git add .
-            git commit -m "Add parts for $REPO_NAME" || echo "No changes"
+            git commit -m "Add video parts"
             git push origin main || git push origin master
-            
+
             cd ..
-            rm -rf target_repo
+            rm -rf repo
             REPO_COUNTER=$((REPO_COUNTER+1))
           done
