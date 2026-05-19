@@ -20,15 +20,33 @@ jobs:
         run: |
           brew install yt-dlp deno coreutils
           
-      - name: Download Video via yt-dlp
+      - name: Download Video via Cobalt API
         run: |
           url="${{ github.event.inputs.youtube_url }}"
-          echo "Downloading $url..."
+          echo "Requesting download link for $url via Cobalt API..."
           
-          # استفاده از کلاینت‌های مختلف برای فریب دادن سیستم ضد ربات
-          yt-dlp --extractor-args "youtube:player_client=ios,web" -f "best[ext=mp4]" -o "video.mp4" "$url"
+          # دریافت لینک مستقیم از طریق API سایت Cobalt
+          RESPONSE=$(curl -s -X POST "https://api.cobalt.tools/api/json" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -H "Origin: https://cobalt.tools" \
+            -H "Referer: https://cobalt.tools/" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+            -d "{\"url\": \"$url\", \"vQuality\": \"720\"}")
+            
+          # استخراج لینک دانلود با jq
+          DOWNLOAD_URL=$(echo $RESPONSE | jq -r '.url')
           
+          if [ "$DOWNLOAD_URL" == "null" ] || [ -z "$DOWNLOAD_URL" ]; then
+            echo "Error: Could not extract download link. YouTube might have blocked the proxy."
+            echo "API Response: $RESPONSE"
+            exit 1
+          fi
+          
+          echo "Direct link obtained! Downloading file..."
+          curl -L -o video.mp4 "$DOWNLOAD_URL"
           echo "Download completed!"
+
 
       - name: Check file and Split
         run: |
