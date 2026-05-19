@@ -1,4 +1,4 @@
-name: Download YouTube, Split and Distribute (Mirror-Based)
+name: Download YouTube, Split and Distribute (Python-Based)
 
 on:
   workflow_dispatch:
@@ -19,50 +19,33 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ffmpeg curl
-          pip install yt-dlp
 
-      - name: Extract Video ID
-        id: extract
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install pytubefix
+        run: pip install pytubefix
+
+      - name: Download Video via Python
         run: |
-          URL="${{ github.event.inputs.youtube_url }}"
-
-          if echo "$URL" | grep -q "youtu.be/"; then
-            VIDEO_ID=$(echo "$URL" | sed -n 's#.*youtu.be/\([^?&/]*\).*#\1#p')
-          else
-            VIDEO_ID=$(echo "$URL" | sed -n 's/.*v=\([^&]*\).*/\1/p')
-          fi
-
-          if [ -z "$VIDEO_ID" ]; then
-            echo "Could not extract video ID"
-            exit 1
-          fi
-
-          echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Download Video via Mirror
-        run: |
-          VIDEO_ID="${{ steps.extract.outputs.video_id }}"
-
-          # سعی روی چند mirror معروف (ممکن است بسته به زمان کار کنند یا نکنند)
-          MIRRORS=(
-            "https://yewtu.be/latest_version?id=$VIDEO_ID&itag=22"
-            "https://invidious.snopyta.org/latest_version?id=$VIDEO_ID&itag=22"
-            "https://piped.video/watch?v=$VIDEO_ID"
-          )
-
-          SUCCESS=0
-          for URL in "${MIRRORS[@]}"; do
-            echo "Trying: $URL"
-            if curl -L --fail -o video.mp4 "$URL"; then
-              SUCCESS=1
-              break
-            fi
-          done
-
-          if [ "$SUCCESS" -ne 1 ]; then
-            echo "Failed to download from all mirrors"
-            exit 1
-          fi
+          python -c "
+          from pytubefix import YouTube
+          import sys
+          
+          url = '${{ github.event.inputs.youtube_url }}'
+          try:
+              yt = YouTube(url)
+              # گرفتن بهترین کیفیت که صدا و تصویر با هم ادغام شده باشند (progressive)
+              stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+              print(f'Downloading: {yt.title}')
+              stream.download(filename='video.mp4')
+              print('Download completed!')
+          except Exception as e:
+              print(f'Error: {e}')
+              sys.exit(1)
+          "
 
       - name: Prepare File
         run: |
