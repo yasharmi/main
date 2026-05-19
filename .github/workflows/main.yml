@@ -36,8 +36,8 @@ jobs:
           
           url = '${{ github.event.inputs.youtube_url }}'
           try:
-              yt = YouTube(url)
-              # گرفتن بهترین کیفیت که صدا و تصویر با هم ادغام شده باشند (progressive)
+              # استفاده از کلاینت اندروید برای دور زدن تشخیص ربات یوتیوب
+              yt = YouTube(url, client='ANDROID')
               stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
               print(f'Downloading: {yt.title}')
               stream.download(filename='video.mp4')
@@ -46,6 +46,7 @@ jobs:
               print(f'Error: {e}')
               sys.exit(1)
           "
+
 
       - name: Prepare File
         run: |
