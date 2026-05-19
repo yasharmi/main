@@ -1,83 +1,94 @@
-name: Download YouTube, Split and Distribute (yt-dlp Based)
+name: YouTube to GitHub Storage via Tor
 
 on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: "لینک ویدئوی یوتیوب"
+        description: 'YouTube Video URL'
         required: true
+        type: string
       github_username:
-        description: "نام کاربری گیت‌هاب شما"
+        description: 'Your GitHub Username'
         required: true
+        type: string
 
 jobs:
-  process-file:
+  download-split-push:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Install required tools
+      - name: Install Tor and yt-dlp
         run: |
-          sudo apt update
-          sudo apt install -y ffmpeg curl unzip
-          # نصب Deno برای اجرای کدهای امنیتی یوتیوب توسط yt-dlp
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> $GITHUB_PATH
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install yt-dlp
-        run: pip install --upgrade yt-dlp
-
-      - name: Download Video via yt-dlp
+          sudo apt-get update
+          sudo apt-get install tor -y
+          sudo service tor start
+          pip install --upgrade yt-dlp
+          
+      - name: Wait for Tor connection
+        run: sleep 10 # چند ثانیه صبر برای اتصال کامل Tor
+          
+      - name: Download Video via yt-dlp (Tor Proxy)
         run: |
           url="${{ github.event.inputs.youtube_url }}"
-          echo "Downloading $url..."
-          # استفاده از کلاینت‌های مختلف برای دور زدن تشخیص ربات
-          yt-dlp -f "best[ext=mp4]" --extractor-args "youtube:player_client=ios,web" -o "video.mp4" "$url"
+          echo "Downloading $url via Tor..."
+          
+          # استفاده از پروکسی Tor برای دور زدن محدودیت یوتیوب
+          yt-dlp --proxy "socks5://127.0.0.1:9050" -f "best[ext=mp4]" -o "video.mp4" "$url"
+          
           echo "Download completed!"
 
-      - name: Prepare File
+      - name: Check file and Split
         run: |
+          # بررسی صحت فایل ویدئو
           file video.mp4
-
-      - name: Split File
-        run: |
+          
+          # تکه‌تکه کردن به فایل‌های ۹۵ مگابایتی
           split -b 95M -d video.mp4 part_
+          
+          # نمایش پارت‌های ساخته شده
+          ls -lh part_*
 
-      - name: Distribute to Storage Repos
+      - name: Distribute to Storage Repositories
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           USERNAME: ${{ github.event.inputs.github_username }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-
+          # ایجاد آرایه از تمام پارت‌ها
           PARTS=(part_*)
           TOTAL_PARTS=${#PARTS[@]}
-
+          echo "Total parts to process: $TOTAL_PARTS"
+          
           REPO_COUNTER=1
-          PART_COUNTER=0
-
-          while [ $PART_COUNTER -lt $TOTAL_PARTS ]; do
+          PART_INDEX=0
+          
+          # حلقه برای توزیع پارت‌ها در ریپوها
+          while [ $PART_INDEX -lt $TOTAL_PARTS ]; do
             REPO_NAME="Storage-$REPO_COUNTER"
-            echo "Processing $REPO_NAME..."
-
+            echo "Cloning and pushing to $REPO_NAME..."
+            
+            # کلون کردن ریپوی ذخیره‌سازی مقصد
             git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
             cd target_repo
-
-            for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
-              cp ../${PARTS[$PART_COUNTER]} .
-              PART_COUNTER=$((PART_COUNTER+1))
+            
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            
+            # انتقال حداکثر ۶ فایل به این ریپو
+            COPIED=0
+            while [ $COPIED -lt 6 ] && [ $PART_INDEX -lt $TOTAL_PARTS ]; do
+              cp ../${PARTS[$PART_INDEX]} .
+              echo "Copied ${PARTS[$PART_INDEX]} to $REPO_NAME"
+              PART_INDEX=$((PART_INDEX + 1))
+              COPIED=$((COPIED + 1))
             done
-
-            git add .
-            git commit -m "Add parts for $REPO_NAME" || echo "No changes"
+            
+            # کامیت و پوش کردن فایل‌ها
+            git add part_*
+            git commit -m "Upload video parts" || echo "No changes to commit"
             git push origin main || git push origin master
-
+            
+            # خروج از پوشه ریپو و پاک کردن آن برای چرخه بعدی
             cd ..
             rm -rf target_repo
-            REPO_COUNTER=$((REPO_COUNTER+1))
+            
+            REPO_COUNTER=$((REPO_COUNTER + 1))
           done
