@@ -1,4 +1,4 @@
-name: Download YouTube, Split and Distribute (No-login Safe)
+name: Download YouTube, Split and Distribute (Mirror-Based)
 
 on:
   workflow_dispatch:
@@ -15,39 +15,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install yt-dlp
+      - name: Install required tools
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg
+          sudo apt install -y ffmpeg curl
           pip install yt-dlp
 
-      - name: Convert URL to Proxy (Piped / Invidious)
-        id: convert
+      - name: Extract Video ID
+        id: extract
         run: |
           URL="${{ github.event.inputs.youtube_url }}"
-          # اگر لینک از youtube.com بود، به آینه piped و invidious تغییر بده
-          if echo "$URL" | grep -q "youtube.com\|youtu.be"; then
-            echo "Using proxy mirror..."
-            VIDEO_ID=$(yt-dlp --get-id "$URL") || exit 1
-            PROXY_URL="https://piped.video/watch?v=$VIDEO_ID"
-            echo "proxy_url=$PROXY_URL" >> "$GITHUB_OUTPUT"
+
+          if echo "$URL" | grep -q "youtu.be/"; then
+            VIDEO_ID=$(echo "$URL" | sed -n 's#.*youtu.be/\([^?&/]*\).*#\1#p')
           else
-            echo "proxy_url=$URL" >> "$GITHUB_OUTPUT"
+            VIDEO_ID=$(echo "$URL" | sed -n 's/.*v=\([^&]*\).*/\1/p')
           fi
 
-      - name: Download Video via Proxy
+          if [ -z "$VIDEO_ID" ]; then
+            echo "Could not extract video ID"
+            exit 1
+          fi
+
+          echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download Video via Mirror
         run: |
-          VIDEO_ID=$(echo "${{ github.event.inputs.youtube_url }}" | sed -n 's/.*v=\([^&]*\).*/\1/p')
-          curl -L "https://yewtu.be/latest_version?id=$VIDEO_ID&itag=22" -o video.mp4
+          VIDEO_ID="${{ steps.extract.outputs.video_id }}"
+
+          # سعی روی چند mirror معروف (ممکن است بسته به زمان کار کنند یا نکنند)
+          MIRRORS=(
+            "https://yewtu.be/latest_version?id=$VIDEO_ID&itag=22"
+            "https://invidious.snopyta.org/latest_version?id=$VIDEO_ID&itag=22"
+            "https://piped.video/watch?v=$VIDEO_ID"
+          )
+
+          SUCCESS=0
+          for URL in "${MIRRORS[@]}"; do
+            echo "Trying: $URL"
+            if curl -L --fail -o video.mp4 "$URL"; then
+              SUCCESS=1
+              break
+            fi
+          done
+
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "Failed to download from all mirrors"
+            exit 1
+          fi
 
       - name: Prepare File
         run: |
-          FILE=$(ls video.*)
-          mv "$FILE" main_file.mp4
+          file video.mp4
 
       - name: Split File
         run: |
-          split -b 95M -d main_file.mp4 part_
+          split -b 95M -d video.mp4 part_
 
       - name: Distribute to Storage Repos
         env:
@@ -59,26 +82,26 @@ jobs:
 
           PARTS=(part_*)
           TOTAL_PARTS=${#PARTS[@]}
-          
+
           REPO_COUNTER=1
           PART_COUNTER=0
 
           while [ $PART_COUNTER -lt $TOTAL_PARTS ]; do
             REPO_NAME="Storage-$REPO_COUNTER"
             echo "Processing $REPO_NAME..."
-            
+
             git clone https://$USERNAME:$GITHUB_TOKEN@github.com/$USERNAME/$REPO_NAME.git target_repo
             cd target_repo
-            
+
             for ((i=0; i<6 && PART_COUNTER<TOTAL_PARTS; i++)); do
               cp ../${PARTS[$PART_COUNTER]} .
               PART_COUNTER=$((PART_COUNTER+1))
             done
-            
+
             git add .
             git commit -m "Add parts for $REPO_NAME" || echo "No changes"
             git push origin main || git push origin master
-            
+
             cd ..
             rm -rf target_repo
             REPO_COUNTER=$((REPO_COUNTER+1))
