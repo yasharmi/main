@@ -18,7 +18,10 @@ jobs:
       - name: Install required tools
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg curl
+          sudo apt install -y ffmpeg curl unzip
+          # نصب Deno برای اجرای کدهای امنیتی یوتیوب توسط yt-dlp
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -32,8 +35,8 @@ jobs:
         run: |
           url="${{ github.event.inputs.youtube_url }}"
           echo "Downloading $url..."
-          # دانلود بهترین کیفیت به صورت فایل mp4 یکپارچه
-          yt-dlp -f "best[ext=mp4]" -o "video.mp4" "$url"
+          # استفاده از کلاینت‌های مختلف برای دور زدن تشخیص ربات
+          yt-dlp -f "best[ext=mp4]" --extractor-args "youtube:player_client=ios,web" -o "video.mp4" "$url"
           echo "Download completed!"
 
       - name: Prepare File
